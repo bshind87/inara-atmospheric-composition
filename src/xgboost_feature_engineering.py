@@ -1,7 +1,8 @@
-# feature_engineering.py
+# xgboost_feature_engineering.py
 
 import numpy as np
 import os
+import joblib
 from scipy.signal import find_peaks
 from sklearn.feature_selection import VarianceThreshold
 
@@ -12,16 +13,6 @@ DATA_DIR = "../inara_data/processed/"
 OUTPUT_DIR = "../inara_data/features/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ================================
-# LOAD DATA
-# ================================
-spectra = np.load(os.path.join(DATA_DIR, "spectra.npy"), mmap_mode='r')
-targets = np.load(os.path.join(DATA_DIR, "molecules.npy"), mmap_mode='r')
-aux = np.load(os.path.join(DATA_DIR, "aux_params.npy"), mmap_mode='r')
-
-print("Loaded data:")
-print("Spectra:", spectra.shape)
-print("Targets:", targets.shape)
 
 # ================================
 # FEATURE FUNCTIONS
@@ -32,17 +23,19 @@ def extract_stat_features(s):
         np.percentile(s, 25), np.percentile(s, 50), np.percentile(s, 75)
     ]
 
+
 def band_features(s, n_bands=12):
-    bands = np.array_split(s, n_bands)
-    return [np.mean(b) for b in bands]
+    return [np.mean(b) for b in np.array_split(s, n_bands)]
+
 
 def gradient_features(s):
     grad = np.gradient(s)
     return [np.mean(grad), np.std(grad)]
 
+
 def fft_features(s, k=40):
-    fft = np.fft.fft(s)
-    return np.abs(fft[:k])
+    return np.abs(np.fft.fft(s)[:k])
+
 
 def peak_features(s):
     peaks, _ = find_peaks(-s, prominence=0.01)
@@ -52,12 +45,15 @@ def peak_features(s):
         np.std(s[peaks]) if len(peaks) > 0 else 0
     ]
 
+
 def snr_feature(signal, noise):
     return np.mean(signal) / (np.std(noise) + 1e-6)
+
 
 def downsample_signal(s, n_points):
     idx = np.linspace(0, len(s) - 1, n_points).astype(int)
     return s[idx]
+
 
 def extract_spectral_windows(s, n_windows=20, window_size=50):
     features = []
@@ -70,10 +66,14 @@ def extract_spectral_windows(s, n_windows=20, window_size=50):
 
     return features
 
+
 # ================================
-# FEATURE EXTRACTION
+# MAIN FEATURE EXTRACTION
 # ================================
 def extract_features(spec, aux_features):
+    """
+    This function is SAFE to import (used in predict.py)
+    """
     ch0, ch1, ch2 = spec
     features = []
 
@@ -88,48 +88,65 @@ def extract_features(spec, aux_features):
     features += peak_features(ch2)
     features.append(snr_feature(ch2, ch1))
 
-    # ============================
-    # LOCAL SPECTRAL WINDOWS (NEW)
-    # ============================
+    # Local windows (important for weak molecules)
     features += extract_spectral_windows(ch2)
 
-    # 🔥 CRITICAL: retain spectral shape
-    features += list(downsample_signal(ch2, 400))  # absorption
-    features += list(downsample_signal(ch1, 200))  # noise-adjusted
+    # Raw spectral shape (critical)
+    features += list(downsample_signal(ch2, 400))
+    features += list(downsample_signal(ch1, 200))
 
-    # Aux
+    # Auxiliary parameters
     features += list(aux_features)
 
     return np.array(features, dtype=np.float32)
 
-# ================================
-# BUILD FEATURE MATRIX
-# ================================
-X = []
-
-for i in range(len(spectra)):
-    if i % 5000 == 0:
-        print(f"Processing {i}/{len(spectra)}")
-    X.append(extract_features(spectra[i], aux[i]))
-
-X = np.array(X)
-
-print("Raw feature matrix shape:", X.shape)
 
 # ================================
-# CLEAN DATA
+# BUILD FEATURE MATRIX (TRAINING ONLY)
 # ================================
-X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+def build_feature_matrix():
+    print("Loading data...")
 
-selector = VarianceThreshold()
-X = selector.fit_transform(X)
+    spectra = np.load(os.path.join(DATA_DIR, "spectra.npy"), mmap_mode='r')
+    targets = np.load(os.path.join(DATA_DIR, "molecules.npy"), mmap_mode='r')
+    aux = np.load(os.path.join(DATA_DIR, "aux_params.npy"), mmap_mode='r')
 
-print("Final feature matrix shape:", X.shape)
+    print("Loaded data:")
+    print("Spectra:", spectra.shape)
+    print("Targets:", targets.shape)
+
+    X = []
+
+    for i in range(len(spectra)):
+        if i % 5000 == 0:
+            print(f"Processing {i}/{len(spectra)}")
+
+        X.append(extract_features(spectra[i], aux[i]))
+
+    X = np.array(X)
+
+    print("Raw feature matrix shape:", X.shape)
+
+    # Clean NaNs/Infs
+    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Feature selection
+    selector = VarianceThreshold()
+    X = selector.fit_transform(X)
+
+    print("Final feature matrix shape:", X.shape)
+
+    # Save
+    np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
+    np.save(os.path.join(OUTPUT_DIR, "targets.npy"), targets)
+
+    joblib.dump(selector, os.path.join(OUTPUT_DIR, "variance_selector.pkl"))
+
+    print("Features + selector saved successfully 🚀")
+
 
 # ================================
-# SAVE
+# MAIN ENTRY (CRITICAL FIX)
 # ================================
-np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
-np.save(os.path.join(OUTPUT_DIR, "targets.npy"), targets)
-
-print("Features saved successfully 🚀")
+if __name__ == "__main__":
+    build_feature_matrix()
