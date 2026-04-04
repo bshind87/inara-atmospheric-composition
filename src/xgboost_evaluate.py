@@ -5,42 +5,52 @@ import numpy as np
 import joblib
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
-DATA_DIR = "../inara_data/features/"
 MODEL_DIR = "../models/"
-N_MOLECULES = 12
 
-# Load data
-X = np.load(os.path.join(DATA_DIR, "X.npy"))
-y = np.load(os.path.join(DATA_DIR, "targets.npy"))
+MOLECULES = [
+    "H2O","CO2","O2","O3","CH4",
+    "N2","N2O","CO","H2","H2S","SO2","NH3"
+]
 
-# Load scaler
-scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
-X = scaler.transform(X)
+# ================================
+# LOAD TEST DATA (SQRT SPACE)
+# ================================
+X = np.load(os.path.join(MODEL_DIR, "X_test.npy"))
+y = np.load(os.path.join(MODEL_DIR, "y_test.npy"))
 
-# Load models and predict
-preds = []
+# ================================
+# LOAD MODELS
+# ================================
+strong_models = joblib.load(os.path.join(MODEL_DIR, "strong_models.pkl"))
+weak_models = joblib.load(os.path.join(MODEL_DIR, "weak_models.pkl"))
 
-for i in range(N_MOLECULES):
-    model_path = os.path.join(MODEL_DIR, f"xgb_model_mol_{i}.pkl")
-    model = joblib.load(model_path)
+# ================================
+# PREDICT (SQRT SPACE)
+# ================================
+y_pred = np.zeros_like(y)
 
-    pred = model.predict(X)
-    preds.append(pred)
+for i, model in enumerate(strong_models):
+    y_pred[:, i] = model.predict(X)
 
-y_pred = np.column_stack(preds)
+for i, model in enumerate(weak_models):
+    y_pred[:, i + 5] = model.predict(X)
+
+y_pred = y_pred
+y_true = y
 
 # ================================
 # METRICS
 # ================================
-print("\nOverall Metrics:")
-print("R2   :", r2_score(y, y_pred))
-print("RMSE :", np.sqrt(mean_squared_error(y, y_pred)))
-print("MAE  :", mean_absolute_error(y, y_pred))
+print("\n=== TEST METRICS ===")
+print("R2   :", r2_score(y_true, y_pred))
+print("RMSE :", np.sqrt(mean_squared_error(y_true, y_pred)))
+print("MAE  :", mean_absolute_error(y_true, y_pred))
 
-print("\nPer Molecule Metrics:")
-for i in range(N_MOLECULES):
-    r2_i = r2_score(y[:, i], y_pred[:, i])
-    rmse_i = np.sqrt(mean_squared_error(y[:, i], y_pred[:, i]))
-    mae_i = mean_absolute_error(y[:, i], y_pred[:, i])
+print("\n=== PER MOLECULE ===")
 
-    print(f"Molecule {i:02d} → R2={r2_i:.3f}, RMSE={rmse_i:.3f}, MAE={mae_i:.3f}")
+for i in range(12):
+    r2_i = r2_score(y_true[:, i], y_pred[:, i])
+    rmse_i = np.sqrt(mean_squared_error(y_true[:, i], y_pred[:, i]))
+    mae_i = mean_absolute_error(y_true[:, i], y_pred[:, i])
+
+    print(f"{MOLECULES[i]} → R2={r2_i:.3f}, RMSE={rmse_i:.3f}, MAE={mae_i:.3f}")

@@ -59,7 +59,11 @@ def main(input_path):
     selector = load_selector()
 
     files = (
-        [os.path.join(input_path, f) for f in os.listdir(input_path) if f.endswith(".csv")]
+        [
+            os.path.join(input_path, f)
+            for f in os.listdir(input_path)
+            if f.endswith(".csv") and f[:7].isdigit()
+        ]
         if os.path.isdir(input_path)
         else [input_path]
     )
@@ -80,14 +84,11 @@ def main(input_path):
 
     df = pd.DataFrame(results, columns=MOLECULE_NAMES)
     df.insert(0, "file", names)
-    #df.to_csv("prediction_report.csv", index=False)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = os.path.join(REPORT_DIR, f"prediction_{timestamp}.csv")
 
-    # Save CSV
     df.to_csv(csv_path, index=False)
-    # Generate HTML report
     generate_prediction_report(df)
     print(f"\nCSV saved → {csv_path}")
 
