@@ -131,6 +131,14 @@ def get_dataloaders(processed_dir=PROCESSED_DIR,
     vl_spec, vl_mol, vl_aux = load(vl_idx)
     ts_spec, ts_mol, ts_aux = load(ts_idx)
 
+    # ── TARGET NORMALIZATION (TRAIN-ONLY) ─────────────────────
+    y_mean = tr_mol.mean(axis=0)
+    y_std = tr_mol.std(axis=0) + 1e-6
+
+    tr_mol = (tr_mol - y_mean) / y_std
+    vl_mol = (vl_mol - y_mean) / y_std
+    ts_mol = (ts_mol - y_mean) / y_std
+
     train_ds = INARADataset(tr_spec, tr_mol, tr_aux, augment=True)
     scaler   = train_ds.scaler
     val_ds   = INARADataset(vl_spec, vl_mol, vl_aux, aux_scaler=scaler)
@@ -143,6 +151,6 @@ def get_dataloaders(processed_dir=PROCESSED_DIR,
         DataLoader(train_ds, shuffle=True,  **kw),
         DataLoader(val_ds,   shuffle=False, **kw),
         DataLoader(test_ds,  shuffle=False, **kw),
-        scaler,
+        (scaler, y_mean, y_std),
         wavelengths,
     )

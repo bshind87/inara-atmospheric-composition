@@ -1,5 +1,3 @@
-# xgboost_train.py
-
 import os
 import numpy as np
 import joblib
@@ -7,38 +5,68 @@ import xgboost as xgb
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 DATA_DIR = "../inara_data/features/"
 MODEL_DIR = "../models/"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+# ─────────────────────────────────────────────
+# LOAD DATA
+# ─────────────────────────────────────────────
 X = np.load(os.path.join(DATA_DIR, "X.npy"))
 y = np.load(os.path.join(DATA_DIR, "targets.npy"))
 
-print("Loaded:", X.shape)
+print("Loaded:", X.shape, y.shape)
 
-# Load selector and move to model dir
+# ─────────────────────────────────────────────
+# FEATURE SELECTOR
+# ─────────────────────────────────────────────
 selector = joblib.load(os.path.join(DATA_DIR, "variance_selector.pkl"))
 joblib.dump(selector, os.path.join(MODEL_DIR, "variance_selector.pkl"))
 
-# Split
-X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42)
-X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+# ─────────────────────────────────────────────
+# SPLIT
+# ─────────────────────────────────────────────
+X_train, X_temp, y_train, y_temp = train_test_split(
+    X, y, test_size=0.3, random_state=42
+)
 
-# SAVE TEST SPLIT
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp, y_temp, test_size=0.5, random_state=42
+)
+
+# Save test split
 np.save(os.path.join(MODEL_DIR, "X_test.npy"), X_test)
 np.save(os.path.join(MODEL_DIR, "y_test.npy"), y_test)
 
-# Scale
+# ─────────────────────────────────────────────
+# TARGET NORMALIZATION (TRAIN ONLY)
+# ─────────────────────────────────────────────
+y_mean = y_train.mean(axis=0)
+y_std  = y_train.std(axis=0) + 1e-6
+
+y_train = (y_train - y_mean) / y_std
+y_val   = (y_val - y_mean) / y_std
+y_test  = (y_test - y_mean) / y_std
+
+joblib.dump((y_mean, y_std), os.path.join(MODEL_DIR, "target_scaler.pkl"))
+
+# ─────────────────────────────────────────────
+# FEATURE SCALING
+# ─────────────────────────────────────────────
 scaler = StandardScaler()
 X_train = scaler.fit_transform(X_train)
-X_val = scaler.transform(X_val)
+X_val   = scaler.transform(X_val)
+X_test  = scaler.transform(X_test)
 
 joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
 
-# Train per molecule
-preds = []
+# ─────────────────────────────────────────────
+# TRAIN PER MOLECULE
+# ─────────────────────────────────────────────
+preds_val = []
+preds_test = []
 
 for i in range(y.shape[1]):
     print(f"Training molecule {i}")
@@ -57,44 +85,60 @@ for i in range(y.shape[1]):
 
     joblib.dump(model, os.path.join(MODEL_DIR, f"xgb_model_mol_{i}.pkl"))
 
-    preds.append(model.predict(X_val))
+    preds_val.append(model.predict(X_val))
+    preds_test.append(model.predict(X_test))
 
-#y_pred = np.column_stack(preds)
+# Stack predictions
+y_pred_val = np.column_stack(preds_val)
+y_pred_test = np.column_stack(preds_test)
 
-#print("\nR2:", r2_score(y_val, y_pred))
-#print("RMSE:", np.sqrt(mean_squared_error(y_val, y_pred)))
+# ─────────────────────────────────────────────
+# DENORMALIZE
+# ─────────────────────────────────────────────
+y_val_real = y_val * y_std + y_mean
+y_test_real = y_test * y_std + y_mean
 
-#print("Training complete 🚀")
+y_pred_val = y_pred_val * y_std + y_mean
+y_pred_test = y_pred_test * y_std + y_mean
 
-from sklearn.metrics import mean_absolute_error
+# ─────────────────────────────────────────────
+# METRICS FUNCTION
+# ─────────────────────────────────────────────
+def evaluate(y_true, y_pred, split="VAL"):
+    print(f"\n=== {split} METRICS (OVERALL) ===")
 
-y_pred = np.column_stack(preds)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae  = mean_absolute_error(y_true, y_pred)
 
-# ================================
-# OVERALL METRICS
-# ================================
-print("\n=== VALIDATION METRICS (OVERALL) ===")
-print("R2   :", r2_score(y_val, y_pred))
-print("RMSE :", np.sqrt(mean_squared_error(y_val, y_pred)))
-print("MAE  :", mean_absolute_error(y_val, y_pred))
+    # Correct global R²
+    r2_per_mol = [
+        r2_score(y_true[:, i], y_pred[:, i])
+        for i in range(y_true.shape[1])
+    ]
+    global_r2 = np.mean(r2_per_mol)
 
+    print("R2   :", global_r2)
+    print("RMSE :", rmse)
+    print("MAE  :", mae)
 
-# ================================
-# PER-MOLECULE METRICS
-# ================================
-MOLECULE_NAMES = [
+    print("\n=== PER MOLECULE METRICS ===")
+
+    MOLECULE_NAMES = [
         "H2O","CO2","O2","O3","CH4","N2",
         "N2O","CO","H2","H2S","SO2","NH3"
     ]
 
-print("\n=== PER MOLECULE METRICS ===")
+    for i in range(y_true.shape[1]):
+        r2_i = r2_score(y_true[:, i], y_pred[:, i])
+        rmse_i = np.sqrt(mean_squared_error(y_true[:, i], y_pred[:, i]))
+        mae_i = mean_absolute_error(y_true[:, i], y_pred[:, i])
 
-for i in range(y.shape[1]):
-    r2_i = r2_score(y_val[:, i], y_pred[:, i])
-    rmse_i = np.sqrt(mean_squared_error(y_val[:, i], y_pred[:, i]))
-    mae_i = mean_absolute_error(y_val[:, i], y_pred[:, i])
+        print(f"{MOLECULE_NAMES[i]} → R2={r2_i:.3f}, RMSE={rmse_i:.3f}, MAE={mae_i:.3f}")
 
-    #print(f"Molecule {i:02d} → R2={r2_i:.3f}, RMSE={rmse_i:.3f}, MAE={mae_i:.3f}")
-    print(f"{MOLECULE_NAMES[i]} → R2={r2_i:.3f}, RMSE={rmse_i:.3f}, MAE={mae_i:.3f}")
+# ─────────────────────────────────────────────
+# EVALUATE
+# ─────────────────────────────────────────────
+evaluate(y_val_real, y_pred_val, "VALIDATION")
+evaluate(y_test_real, y_pred_test, "TEST")
 
 print("\nTraining complete 🚀")
