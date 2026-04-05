@@ -59,6 +59,8 @@ class INARADataset(Dataset):
 
         # Fit or apply StandardScaler on auxiliary features
         aux = aux_params.astype(np.float32)
+        # Replace NaN with 0 before scaling — happens when source CSV columns are missing
+        aux = np.nan_to_num(aux, nan=0.0)
         if aux_scaler is None:
             self.scaler = StandardScaler()
             self.aux    = self.scaler.fit_transform(aux)
