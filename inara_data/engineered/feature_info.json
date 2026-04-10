@@ -1,0 +1,37 @@
+{
+  "n_total": 25000,
+  "n_train": 17500,
+  "n_val": 3750,
+  "n_test": 3750,
+  "val_frac": 0.15,
+  "test_frac": 0.15,
+  "seed": 42,
+  "pca_components": 300,
+  "pca_explained_var": 0.9999212448284956,
+  "spectra_shape": [
+    25000,
+    12,
+    101
+  ],
+  "molecules_shape": [
+    25000,
+    12
+  ],
+  "molecule_names": [
+    "H2O",
+    "CO2",
+    "O2",
+    "O3",
+    "CH4",
+    "N2",
+    "N2O",
+    "CO",
+    "H2",
+    "H2S",
+    "SO2",
+    "NH3"
+  ],
+  "profile": "local",
+  "processed_dir": "/Users/bhalchandra/myPythonCode/inara_changes/inara_data/processed",
+  "engineered_dir": "/Users/bhalchandra/myPythonCode/inara_changes/inara_data/engineered"
+}
